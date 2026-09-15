@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LLM 接口性能测试</title>
+<style>
+:root {
+  --fg: #1f2937; --muted: #6b7280; --line: #e5e7eb; --bg: #f3f4f6;
+  --card: #ffffff; --accent: #2563eb; --danger: #dc2626; --ok: #059669;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 14px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+}
+.wrap { max-width: 1100px; margin: 0 auto; padding: 20px 16px 60px; }
+h1 { font-size: 20px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 18px; font-size: 13px; }
+.card {
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  padding: 16px 18px; margin-bottom: 16px;
+}
+.card h2 { font-size: 15px; margin: 0 0 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.card h2 .tag { font-size: 12px; color: var(--muted); font-weight: normal; }
+.card h2 .spacer { flex: 1; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { border-bottom: 1px solid var(--line); padding: 6px 8px; text-align: left; white-space: nowrap; }
+th { color: var(--muted); font-weight: 500; background: #fafafa; position: sticky; top: 0; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.tableWrap { overflow-x: auto; }
+td.ell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+tr:hover td { background: #f9fafb; }
+table.scroll { display: block; max-height: 420px; overflow: auto; }
+button {
+  font: inherit; padding: 5px 14px; border-radius: 7px; border: 1px solid var(--line);
+  background: #fff; cursor: pointer;
+}
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.danger { color: var(--danger); border-color: #fecaca; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+input, select, textarea {
+  font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px;
+  background: #fff; color: var(--fg); width: 100%;
+}
+label.f { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+label.f input, label.f select { color: var(--fg); }
+.fixedval { padding: 6px 0; font-size: 13px; color: var(--fg); word-break: break-all; }
+.grid { display: grid; gap: 12px; }
+.g3 { grid-template-columns: repeat(3, 1fr); }
+.g4 { grid-template-columns: repeat(4, 1fr); }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.muted { color: var(--muted); }
+.err { color: var(--danger); font-size: 12px; min-height: 16px; }
+.badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; }
+.badge.ok { background: #d1fae5; color: #065f46; }
+.badge.fail { background: #fee2e2; color: #991b1b; }
+#profileForm { border-top: 1px dashed var(--line); margin-top: 12px; padding-top: 12px; }
+.hidden { display: none !important; }
+.checks { display: flex; flex-wrap: wrap; gap: 8px 20px;
+  border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+.checks label { display: flex; gap: 7px; align-items: center; font-size: 13px; cursor: pointer;
+  white-space: nowrap; }
+.checks input { width: auto; }
+.checks .prov { font-size: 12px; color: var(--muted); background: #f3f4f6;
+  border-radius: 4px; padding: 0 5px; }
+.progress-outer { background: #e5e7eb; border-radius: 999px; height: 12px; overflow: hidden; }
+.progress-inner { background: var(--accent); height: 100%; width: 0; transition: width .4s; }
+.stat-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.stat { background: #fafafa; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.stat .v { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.stat .k { font-size: 12px; color: var(--muted); }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin: 6px 0; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; }
+canvas { width: 100%; height: 200px; display: block; }
+details { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin-top: 12px; background: #fcfcfd; }
+details summary { cursor: pointer; font-weight: 600; font-size: 13px; }
+details[open] summary { margin-bottom: 10px; }
+.section-gap { margin-top: 14px; }
+h3.mini { font-size: 12px; color: var(--muted); font-weight: 500; margin: 12px 0 4px; }
+h3.mini:first-child { margin-top: 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>LLM 接口性能测试</h1>
+  <div class="sub">TTFT / 输出速度 / 缓存命中率 · 多模型对比 · API Key 只存在本机 data/profiles.json</div>
+
+  <!-- 1. 模型管理 -->
+  <div class="card">
+    <h2>模型 <span class="tag">选择提供商后只需填 API Key，最多再填个模型名</span></h2>
+    <table id="profileTable">
+      <thead><tr><th>模型</th><th>提供商</th><th>Base URL</th><th>思考</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="muted" id="profileEmpty" style="padding:8px 0">还没有模型，点下面添加。</div>
+    <div style="margin-top:10px"><button class="primary" id="btnAddProfile">＋ 添加模型</button></div>
+    <div id="profileForm" class="hidden">
+      <div class="grid g3" style="margin-top:4px">
+        <label class="f">提供商<select id="f_provider"></select></label>
+        <label class="f">API Key<input id="f_api_key" type="password" placeholder="sk-...（留空则不带鉴权头）"></label>
+        <label class="f" id="f_model_wrap">模型名<input id="f_model" placeholder="如 glm-4.6"></label>
+        <div class="hidden" id="f_model_fixed_wrap"><div class="f">模型<div class="fixedval" id="f_model_fixed"></div></div></div>
+        <label class="f hidden" id="f_baseurl_wrap">Base URL<input id="f_base_url" placeholder="https://xxx/v1"></label>
+        <div id="f_baseurl_fixed_wrap"><div class="f">Base URL<div class="fixedval" id="f_baseurl_fixed"></div></div></div>
+        <label class="f">思考开关<select id="f_thinking_enabled">
+          <option value="0">关闭</option><option value="1">开启</option></select></label>
+        <label class="f" id="f_level_wrap">思考程度<select id="f_thinking_level">
+          <option value="low">低</option><option value="medium" selected>中</option><option value="high">高</option></select></label>
+        <label class="f hidden" id="f_style_wrap">思考参数风格<select id="f_thinking_style"></select></label>
+      </div>
+      <div class="err" id="profileFormErr"></div>
+      <div class="row" style="margin-top:8px">
+        <button class="primary" id="btnSaveProfile">保存</button>
+        <button id="btnCancelProfile">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. 测试配置 -->
+  <div class="card">
+    <h2>测试配置</h2>
+    <div class="muted" style="font-size:12px;margin-bottom:6px">要测的模型（可多选，顺序执行）</div>
+    <div class="checks" id="profileChecks"></div>
+    <div class="grid g3 section-gap">
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <label class="f">数据集<select id="c_dataset"></select>
+          <span id="datasetTip" style="font-weight:400"></span></label>
+        <label class="f">并发数（1 = 串行）<input id="c_concurrency" type="number" min="1" value="1"></label>
+        <label class="f">轮数（数据集重复遍数）<input id="c_rounds" type="number" min="1" value="3"></label>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <label class="f">max_tokens（留空不限制）<input id="c_max_tokens" type="number" min="1" placeholder="留空 = 不限制"></label>
+        <label class="f">temperature（留空不传）<input id="c_temperature" type="number" step="0.1" placeholder="留空 = 用服务端默认"></label>
+        <label class="f">请求超时（秒）<input id="c_timeout" type="number" min="5" value="180"></label>
+      </div>
+      <div class="row" style="gap:18px;align-items:flex-start;flex-direction:column">
+        <label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" id="c_stream" checked style="width:auto">流式 stream（关闭则无法测 TTFT）</label>
+        <label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" id="c_usage" checked style="width:auto">请求 usage（流式拿 token 用量）</label>
+        <div class="row">
+          <button class="primary" id="btnStart">开始测试</button>
+          <button class="danger" id="btnStop" disabled>停止</button>
+        </div>
+        <span class="muted" id="runState" style="font-size:13px"></span>
+        <div class="err" id="runErr"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. 进度 -->
+  <div class="card hidden" id="progressCard">
+    <div class="progress-outer"><div class="progress-inner" id="progressBar"></div></div>
+    <div class="row" style="justify-content:space-between;margin-top:8px;font-size:13px">
+      <span id="progressText" class="muted"></span>
+      <span id="progressDetail" class="muted"></span>
+    </div>
+  </div>
+
+  <!-- 4. 结果 -->
+  <div class="card hidden" id="resultCard">
+    <h2>结果 <span class="tag" id="resultMeta"></span></h2>
+
+    <div id="overview"></div>
+    <div class="muted" id="overviewExtra" style="font-size:12px;margin-top:8px"></div>
+
+    <div class="section-gap">
+      <div class="legend" id="chartLegend"></div>
+      <h3 class="mini">TTFT（ms，越低越好）</h3>
+      <canvas id="ttftChart"></canvas>
+      <h3 class="mini">输出速度 tok/s（越高越好）</h3>
+      <canvas id="tpsChart"></canvas>
+      <div class="muted" style="font-size:12px;margin-top:-2px">每个点是一次请求，横轴为请求序号 —— 看波动与离群点。</div>
+    </div>
+
+    <details id="groupSection">
+      <summary>分组统计</summary>
+      <div class="row" id="groupProfileSel" style="margin-bottom:10px"></div>
+      <h3 class="mini">按样本（输入长度维度）</h3>
+      <table id="byCaseTable">
+        <thead><tr><th>样本</th><th class="num">成功/总数</th><th class="num">TTFT p50</th><th class="num">tok/s</th><th class="num">缓存命中</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <h3 class="mini">按轮次（缓存暖起：第 1 轮 miss，后续轮命中）</h3>
+      <table id="byRoundTable">
+        <thead><tr><th>轮次</th><th class="num">成功/总数</th><th class="num">TTFT p50</th><th class="num">缓存命中</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </details>
+
+    <details id="detailSection">
+      <summary>单请求明细</summary>
+      <div class="row" style="justify-content:space-between">
+        <span class="muted" style="font-size:12px" id="detailNote"></span>
+        <select id="detailFilter" style="width:auto">
+          <option value="all">全部</option><option value="ok">仅成功</option><option value="err">仅失败</option>
+        </select>
+      </div>
+      <table class="scroll" id="detailTable">
+        <thead><tr>
+          <th>模型</th><th>样本</th><th>轮</th><th>turn</th><th>状态</th><th class="num">TTFT ms</th>
+          <th class="num">思考 ms</th><th class="num">总 ms</th><th class="num">tok/s</th>
+          <th class="num">prompt</th><th class="num">命中</th><th>错误</th>
+        </tr></thead><tbody></tbody>
+      </table>
+    </details>
+  </div>
+
+  <!-- 5. 历史测试（落盘文件） -->
+  <div class="card" id="filesCard">
+    <h2>历史测试 <span class="tag">data/runs/ 下的落盘文件，重启不丢</span></h2>
+    <div class="tableWrap"><table id="filesTable">
+      <thead><tr>
+        <th>时间</th><th>模型</th><th>数据集</th><th>状态</th><th class="num">请求</th>
+        <th class="num">TTFT p50</th><th class="num">tok/s</th><th class="num">缓存命中</th><th></th>
+      </tr></thead>
+      <tbody></tbody>
+    </table></div>
+    <div class="muted" id="filesEmpty" style="padding:8px 0">还没有落盘的测试，跑一次就有了。</div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const COLORS = ["#2563eb","#dc2626","#16a34a","#9333ea","#ea580c","#0891b2","#65a30d","#be185d"];
+
+const state = {
+  profiles: [], datasets: [], meta: {},
+  editingId: null,
+  runId: null, pollTimer: null, lastStatus: null,
+  groupProfileId: null,
+};
+
+// ---------------- 工具 ----------------
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmt = (v, unit="") => v === null || v === undefined ? "—" : (typeof v === "number" ? (Math.round(v*100)/100).toLocaleString() : v) + unit;
+const pct = v => v === null || v === undefined ? "—" : (v*100).toFixed(1) + "%";
+const ms  = v => v === null || v === undefined ? "—" : v >= 10000 ? (v/1000).toFixed(1)+" s" : Math.round(v).toLocaleString()+" ms";
+const cacheRate = r => r.cached_tokens === null || r.cached_tokens === undefined || !r.prompt_tokens ? "—" : (r.cached_tokens/r.prompt_tokens*100).toFixed(0)+"%";
+
+async function fetchJSON(url, opts) {
+  const resp = await fetch(url, opts);
+  const body = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(body.detail || `HTTP ${resp.status}`);
+  return body;
+}
+
+// ---------------- 模型管理 ----------------
+async function loadMeta() {
+  state.meta = await fetchJSON("/api/meta");
+  $("#f_provider").innerHTML = state.meta.providers.map(p =>
+    `<option value="${p.id}">${esc(p.label)}</option>`).join("");
+  $("#f_thinking_style").innerHTML = state.meta.thinking_styles.map(s =>
+    `<option value="${s.id}">${esc(s.label)}</option>`).join("");
+}
+
+function providerOf(id) { return state.meta.providers.find(p => p.id === id) || {}; }
+
+function updateFormVis() {
+  const p = $("#f_provider").value;
+  const prov = providerOf(p);
+  const fixedModel = p === "deepseek";
+  const fixedUrl = p !== "custom";
+  const thinkOn = $("#f_thinking_enabled").value === "1";
+  $("#f_model_wrap").classList.toggle("hidden", fixedModel);
+  $("#f_model_fixed_wrap").classList.toggle("hidden", !fixedModel);
+  if (fixedModel) $("#f_model_fixed").textContent = (prov.models || [])[0] || "";
+  $("#f_baseurl_wrap").classList.toggle("hidden", fixedUrl);
+  $("#f_baseurl_fixed_wrap").classList.toggle("hidden", !fixedUrl);
+  if (fixedUrl) $("#f_baseurl_fixed").textContent = prov.base_url || "";
+  // 思考关了就不问程度和风格
+  $("#f_level_wrap").classList.toggle("hidden", !thinkOn);
+  $("#f_style_wrap").classList.toggle("hidden", !thinkOn || !!prov.style_fixed);
+}
+
+async function loadProfiles() {
+  state.profiles = await fetchJSON("/api/profiles");
+  renderProfiles();
+  renderProfileChecks();
+}
+
+function renderProfiles() {
+  const tb = $("#profileTable tbody");
+  $("#profileEmpty").classList.toggle("hidden", state.profiles.length > 0);
+  tb.innerHTML = state.profiles.map(p => `
+    <tr>
+      <td><b>${esc(p.model)}${p.thinking_enabled ? `·思考${esc(levelZh(p.thinking_level))}` : ""}</b></td>
+      <td>${esc(providerOf(p.provider).label || p.provider)}</td>
+      <td class="muted">${esc(p.base_url)}</td>
+      <td>${p.thinking_enabled ? "开（" + esc(levelZh(p.thinking_level)) + "）" : "关"}</td>
+      <td><button data-edit="${p.id}">编辑</button> <button class="danger" data-del="${p.id}">删除</button></td>
+    </tr>`).join("");
+  tb.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => openProfileForm(b.dataset.edit));
+  tb.querySelectorAll("[data-del]").forEach(b => b.onclick = async () => {
+    if (!confirm("删除这个模型配置？")) return;
+    state.profiles = await fetchJSON(`/api/profiles/${b.dataset.del}`, {method: "DELETE"});
+    renderProfiles(); renderProfileChecks();
+  });
+}
+
+const levelZh = l => ({low: "低", medium: "中", high: "高"}[l] || l);
+
+// 提供商标注：name（贝壳）——provider 用弱化灰字内联，不加列宽
+const provLabel = id => (state.meta.providers.find(p => p.id === id) || {}).label || "";
+const nameProv = (name, provider, bold = false) => {
+  const core = bold ? `<b>${esc(name)}</b>` : esc(name);
+  const lbl = provLabel(provider);
+  return lbl ? `${core}<span class="muted">（${esc(lbl)}）</span>` : core;
+};
+const nameProvText = (name, provider) => {
+  const lbl = provLabel(provider);
+  return lbl ? `${name}（${lbl}）` : name;
+};
+
+function openProfileForm(id) {
+  state.editingId = id || null;
+  const p = state.profiles.find(x => x.id === id) || {};
+  $("#f_provider").value = p.provider || state.meta.providers[0]?.id || "deepseek";
+  updateFormVis();
+  $("#f_api_key").value = p.api_key || "";
+  $("#f_model").value = p.model || "";
+  $("#f_base_url").value = p.provider === "custom" ? (p.base_url || "") : "";
+  $("#f_thinking_enabled").value = p.thinking_enabled ? "1" : "0";
+  $("#f_thinking_level").value = p.thinking_level || "medium";
+  $("#f_thinking_style").value = p.thinking_style || "thinking-type";
+  $("#profileFormErr").textContent = "";
+  $("#profileForm").classList.remove("hidden");
+  $("#f_api_key").focus();
+}
+
+async function saveProfile() {
+  const provider = $("#f_provider").value;
+  const payload = {
+    provider,
+    api_key: $("#f_api_key").value.trim(),
+    model: provider === "deepseek" ? "deepseek-flash" : $("#f_model").value.trim(),
+    base_url: provider === "custom" ? $("#f_base_url").value.trim() : null,
+    thinking_enabled: $("#f_thinking_enabled").value === "1",
+    thinking_level: $("#f_thinking_level").value,
+    thinking_style: providerOf(provider).style_fixed ? null : $("#f_thinking_style").value,
+  };
+  try {
+    const url = state.editingId ? `/api/profiles/${state.editingId}` : "/api/profiles";
+    state.profiles = await fetchJSON(url, {
+      method: state.editingId ? "PUT" : "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload),
+    });
+    closeProfileForm(); renderProfiles(); renderProfileChecks();
+  } catch (e) { $("#profileFormErr").textContent = e.message; }
+}
+
+function closeProfileForm() {
+  state.editingId = null;
+  $("#profileForm").classList.add("hidden");
+}
+
+function renderProfileChecks() {
+  const box = $("#profileChecks");
+  if (!state.profiles.length) {
+    box.innerHTML = `<div class="muted" style="font-size:13px">先在上面添加模型</div>`;
+    return;
+  }
+  box.innerHTML = state.profiles.map((p, i) => `
+    <label><input type="checkbox" value="${p.id}" ${i === 0 ? "checked" : ""}>
+      <b>${esc(p.model)}${p.thinking_enabled ? `·思考${levelZh(p.thinking_level)}` : ""}</b>
+      <span class="prov">${esc(providerOf(p.provider).label || p.provider)}</span></label>`).join("");
+}
+
+// ---------------- 数据集 ----------------
+async function loadDatasets() {
+  state.datasets = await fetchJSON("/api/datasets");
+  $("#c_dataset").innerHTML = state.datasets.map(d =>
+    `<option value="${d.id}">${esc(d.name)}（每轮 ${d.requests_per_round} 请求）</option>`).join("");
+  const upd = () => {
+    const d = state.datasets.find(x => x.id === $("#c_dataset").value);
+    $("#datasetTip").textContent = d ? d.description : "";
+  };
+  $("#c_dataset").onchange = upd; upd();
+}
+
+// ---------------- 运行控制 ----------------
+function collectRunConfig() {
+  const profile_ids = [...$("#profileChecks").querySelectorAll("input:checked")].map(i => i.value);
+  const num = (sel) => $(sel).value === "" ? null : Number($(sel).value);
+  return {
+    profile_ids,
+    dataset_id: $("#c_dataset").value,
+    concurrency: Math.max(1, Number($("#c_concurrency").value) || 1),
+    rounds: Math.max(1, Number($("#c_rounds").value) || 1),
+    stream: $("#c_stream").checked,
+    include_usage: $("#c_usage").checked,
+    max_tokens: num("#c_max_tokens"),
+    temperature: num("#c_temperature"),
+    timeout_s: num("#c_timeout") || 180,
+  };
+}
+
+async function startRun() {
+  const cfg = collectRunConfig();
+  if (!cfg.profile_ids.length) { $("#runErr").textContent = "请至少勾选一个模型"; return; }
+  $("#runErr").textContent = "";
+  try {
+    const {run_id} = await fetchJSON("/api/run", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(cfg),
+    });
+    state.runId = run_id;
+    state.groupProfileId = null;
+    $("#progressCard").classList.remove("hidden");
+    $("#resultCard").classList.add("hidden");
+    setButtons(true);
+    startPolling();
+  } catch (e) { $("#runErr").textContent = e.message; }
+}
+
+async function stopRun() {
+  if (!state.runId) return;
+  try { await fetchJSON(`/api/run/${state.runId}/stop`, {method: "POST"}); }
+  catch (e) { $("#runErr").textContent = e.message; }
+}
+
+function setButtons(running) {
+  $("#btnStart").disabled = running;
+  $("#btnStop").disabled = !running;
+}
+
+function startPolling() {
+  stopPolling();
+  state.pollTimer = setInterval(poll, 1000);
+  poll();
+}
+function stopPolling() {
+  if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
+}
+
+async function poll() {
+  if (!state.runId) return stopPolling();
+  let st;
+  try { st = await fetchJSON(`/api/run/${state.runId}/status`); }
+  catch (e) { $("#runState").textContent = "查询失败：" + e.message; return; }
+  state.lastStatus = st;
+  renderProgress(st);
+  if (st.status !== "running" && st.status !== "pending") {
+    stopPolling(); setButtons(false);
+    $("#runState").textContent = statusLabel(st.status);
+    renderResults(st);
+    loadFiles();
+  } else {
+    $("#resultCard").classList.add("hidden");
+  }
+}
+
+function statusLabel(s) {
+  return {done: "已完成", stopped: "已停止", error: "出错", running: "运行中", pending: "等待中"}[s] || s;
+}
+
+// ---------------- 渲染：进度 ----------------
+function renderProgress(st) {
+  const p = st.progress, total = p.total || 1;
+  $("#progressBar").style.width = Math.round(p.completed / total * 100) + "%";
+  $("#progressText").textContent =
+    `${statusLabel(st.status)}${p.current_profile ? " · 正在测：" + p.current_profile : ""}`;
+  $("#progressDetail").textContent =
+    `请求 ${p.completed}/${p.total} · 失败 ${p.failed} · ${st.dataset.name}`;
+}
+
+// ---------------- 渲染：结果 ----------------
+function renderResults(st) {
+  $("#resultCard").classList.remove("hidden");
+  const dur = st.finished_at && st.started_at ? (st.finished_at - st.started_at).toFixed(0) + "s" : "—";
+  $("#resultMeta").textContent =
+    `${st.dataset.name} · 并发 ${st.engine_config.concurrency} × ${st.engine_config.rounds} 轮 · ${dur}`;
+
+  const pps = st.summary.per_profile;
+  const ov = $("#overview"), extra = $("#overviewExtra");
+  if (!pps.length) {
+    ov.innerHTML = `<div class="muted" style="font-size:13px">没有数据（可能第一轮前就被停止）</div>`;
+    extra.textContent = "";
+  } else if (pps.length === 1) {
+    const s = pps[0].summary;
+    $("#resultMeta").textContent =
+      `${nameProvText(pps[0].profile_name, pps[0].profile_provider)} · ${$("#resultMeta").textContent}`;
+    ov.innerHTML = `<div class="stat-cards">
+      ${statCard(`${s.ok}/${s.n}`, `成功（失败率 ${pct(s.error_rate)}）`)}
+      ${statCard(ms(s.ttft_ms?.mean), "TTFT 均值")}
+      ${statCard(ms(s.ttft_ms?.p50), "TTFT p50")}
+      ${statCard(ms(s.ttft_ms?.p95), "TTFT p95")}
+      ${statCard(fmt(s.tps?.mean), "tok/s 均值")}
+      ${statCard(ms(s.total_ms?.mean), "总时延 均值")}
+      ${statCard(ms(s.total_ms?.p50), "总时延 p50")}
+      ${statCard(ms(s.total_ms?.p95), "总时延 p95")}
+      ${statCard(s.cache_supported ? pct(s.cache_hit_rate) : "N/A", "缓存命中率")}
+      ${s.think_ms ? statCard(ms(s.think_ms.p50), "思考时长 p50") : ""}
+    </div>`;
+    extra.textContent = `聚合吞吐 ${fmt(s.throughput_tps)} tok/s · 墙钟 ${fmt(s.wall_s)} s` +
+      (s.cache_supported ? "" : " · 服务商未返回缓存字段，命中率 N/A");
+  } else {
+    const anyThink = pps.some(pp => pp.summary.think_ms);
+    ov.innerHTML = `<div class="tableWrap"><table><thead><tr>
+      <th>模型</th><th class="num">成功</th><th class="num">失败率</th>
+      <th class="num">TTFT 均值</th><th class="num">TTFT p50</th><th class="num">TTFT p95</th>
+      <th class="num">tok/s 均值</th><th class="num">总时延 均值</th><th class="num">总时延 p50</th><th class="num">总时延 p95</th>
+      ${anyThink ? '<th class="num">思考 p50</th>' : ""}
+      <th class="num">缓存命中</th></tr></thead><tbody>
+      ${pps.map(pp => { const s = pp.summary; return `<tr>
+        <td class="ell" title="${esc(nameProvText(pp.profile_name, pp.profile_provider))}">${nameProv(pp.profile_name, pp.profile_provider, true)}</td>
+        <td class="num">${s.ok}/${s.n}</td><td class="num">${pct(s.error_rate)}</td>
+        <td class="num">${ms(s.ttft_ms?.mean)}</td>
+        <td class="num">${ms(s.ttft_ms?.p50)}</td><td class="num">${ms(s.ttft_ms?.p95)}</td>
+        <td class="num">${fmt(s.tps?.mean)}</td>
+        <td class="num">${ms(s.total_ms?.mean)}</td>
+        <td class="num">${ms(s.total_ms?.p50)}</td><td class="num">${ms(s.total_ms?.p95)}</td>
+        ${anyThink ? `<td class="num">${ms(s.think_ms?.p50)}</td>` : ""}
+        <td class="num">${s.cache_supported ? pct(s.cache_hit_rate) : "N/A"}</td></tr>`; }).join("")}
+    </tbody></table></div>`;
+    extra.textContent = "";
+  }
+
+  renderCharts(st);
+  renderGroups(st, pps);
+  renderDetailTable(st);
+}
+
+const statCard = (v, k) => `<div class="stat"><div class="v">${v}</div><div class="k">${k}</div></div>`;
+
+function renderCharts(st) {
+  const series = st.summary.per_profile.map((pp, i) => ({
+    name: pp.profile_name, provider: pp.profile_provider, color: COLORS[i % COLORS.length],
+    points: st.records.map((r, j) => ({r, j})).filter(x => x.r.profile_id === pp.profile_id),
+  }));
+  $("#chartLegend").innerHTML = series.map(s =>
+    `<span><i style="background:${s.color}"></i>${nameProv(s.name, s.provider)}</span>`).join("") || `<span>无流式数据</span>`;
+  drawChart($("#ttftChart"), series, r => r.ttft_ms, v => v >= 10000 ? (v/1000).toFixed(0)+"s" : Math.round(v));
+  drawChart($("#tpsChart"), series, r => r.tps, v => Math.round(v));
+}
+
+function drawChart(canvas, series, val, fmtY) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth || 800, h = 200;
+  canvas.width = w * dpr; canvas.height = h * dpr;
+  const ctx = canvas.getContext("2d");
+  ctx.scale(dpr, dpr); ctx.clearRect(0, 0, w, h);
+  const pad = {l: 56, r: 12, t: 12, b: 24};
+
+  const all = series.flatMap(s => s.points.map(p => val(p.r)).filter(v => v != null));
+  if (!all.length) return;
+  const yMax = Math.max(...all) * 1.08, yMin = Math.min(...all);
+  const xMax = Math.max(...series.map(s => s.points.length ? s.points[s.points.length - 1].j : 0), 1);
+  const X = j => pad.l + j / xMax * (w - pad.l - pad.r);
+  const Y = v => h - pad.b - (v - yMin) / (yMax - yMin || 1) * (h - pad.t - pad.b);
+
+  ctx.strokeStyle = "#e5e7eb"; ctx.fillStyle = "#6b7280"; ctx.font = "11px sans-serif";
+  for (let g = 0; g <= 4; g++) {
+    const v = yMin + (yMax - yMin) * g / 4, y = Y(v);
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(w - pad.r, y); ctx.stroke();
+    ctx.fillText(fmtY(v), 4, y + 4);
+  }
+  for (const s of series) {
+    const pts = s.points.filter(p => val(p.r) != null);
+    ctx.strokeStyle = s.color + "55"; ctx.lineWidth = 1;
+    ctx.beginPath();
+    pts.forEach((p, i) => {
+      const x = X(p.j), y = Y(val(p.r));
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    });
+    ctx.stroke();
+    ctx.fillStyle = s.color;
+    const step = Math.max(1, Math.ceil(pts.length / 400));
+    pts.filter((_, i) => i % step === 0).forEach(p => {
+      ctx.beginPath(); ctx.arc(X(p.j), Y(val(p.r)), 2, 0, 7); ctx.fill();
+    });
+  }
+}
+
+function renderGroups(st, pps) {
+  // 多模型时提供切换
+  const selBox = $("#groupProfileSel");
+  if (pps.length > 1) {
+    if (!state.groupProfileId || !pps.some(p => p.profile_id === state.groupProfileId)) {
+      state.groupProfileId = pps[0].profile_id;
+    }
+    selBox.innerHTML = `<select id="groupProfileSelect" style="width:auto">${
+      pps.map(p => `<option value="${p.profile_id}" ${p.profile_id === state.groupProfileId ? "selected" : ""}>${esc(nameProvText(p.profile_name, p.profile_provider))}</option>`).join("")
+    }</select>`;
+    $("#groupProfileSelect").onchange = e => {
+      state.groupProfileId = e.target.value;
+      renderGroups(st, pps);
+    };
+  } else {
+    selBox.innerHTML = "";
+    state.groupProfileId = pps[0]?.profile_id || null;
+  }
+  const pp = pps.find(p => p.profile_id === state.groupProfileId) || pps[0];
+  if (!pp) return;
+  $("#byCaseTable tbody").innerHTML = pp.by_case.map(g => {
+    const x = g.summary;
+    return `<tr>
+      <td>${esc(g.label || g.key)}</td><td class="num">${x.ok}/${x.n}</td>
+      <td class="num">${ms(x.ttft_ms?.p50)}</td><td class="num">${fmt(x.tps?.mean)}</td>
+      <td class="num">${x.cache_supported ? pct(x.cache_hit_rate) : "N/A"}</td></tr>`;
+  }).join("");
+  $("#byRoundTable tbody").innerHTML = pp.by_round.map(g => {
+    const x = g.summary;
+    return `<tr>
+      <td>第 ${g.key} 轮</td><td class="num">${x.ok}/${x.n}</td>
+      <td class="num">${ms(x.ttft_ms?.p50)}</td>
+      <td class="num">${x.cache_supported ? pct(x.cache_hit_rate) : "N/A"}</td></tr>`;
+  }).join("");
+}
+
+function renderDetailTable(st) {
+  const filter = $("#detailFilter").value;
+  let rows = st.records;
+  if (filter === "ok") rows = rows.filter(r => r.ok);
+  if (filter === "err") rows = rows.filter(r => !r.ok);
+  const MAX = 300;
+  const shown = rows.slice(-MAX).reverse();
+  $("#detailSection").querySelector("summary").textContent = `单请求明细（${rows.length} 条）`;
+  $("#detailNote").textContent = rows.length > MAX ? `仅显示最近 ${MAX} 条，完整数据在 data/runs 落盘文件里` : "";
+  $("#detailTable tbody").innerHTML = shown.map(r => `
+    <tr>
+      <td>${nameProv(r.profile_name, r.profile_provider)}</td><td>${esc(r.case_name)}</td>
+      <td>${r.round_idx}</td><td>${r.kind === "multi" ? r.turn_idx + "/" + r.turn_total : "—"}</td>
+      <td>${r.ok ? '<span class="badge ok">OK</span>' : '<span class="badge fail">FAIL</span>'}</td>
+      <td class="num">${fmt(r.ttft_ms)}</td><td class="num">${fmt(r.think_ms)}</td>
+      <td class="num">${fmt(r.total_ms)}</td><td class="num">${fmt(r.tps)}</td>
+      <td class="num">${fmt(r.prompt_tokens)}</td>
+      <td class="num">${r.cached_tokens === null ? "—" : fmt(r.cached_tokens)}</td>
+      <td class="muted" title="${esc(r.error)}">${esc((r.error || "").slice(0, 60))}</td>
+    </tr>`).join("");
+}
+
+// ---------------- 历史测试（落盘文件） ----------------
+const fmtTime = ts => {
+  const d = new Date(ts * 1000), p = n => String(n).padStart(2, "0");
+  const now = new Date();
+  const md = `${d.getMonth() + 1}/${d.getDate()}`;
+  return d.getFullYear() === now.getFullYear() ? `${md} ${p(d.getHours())}:${p(d.getMinutes())}`
+    : `${d.getFullYear()}/${md}`;
+};
+
+async function loadFiles() {
+  let files = [];
+  try { files = await fetchJSON("/api/files"); } catch (e) { return; }
+  $("#filesEmpty").classList.toggle("hidden", files.length > 0);
+  const tb = $("#filesTable tbody");
+  tb.innerHTML = files.map(f => {
+    const items = f.profile_items && f.profile_items.length
+      ? f.profile_items : (f.profiles || []).map(n => ({name: n, provider: null}));
+    const full = items.map(it => nameProvText(it.name, it.provider)).join(" vs ");
+    return `
+    <tr>
+      <td>${fmtTime(f.created_at)}</td>
+      <td class="ell" title="${esc(full)}"><b>${items.map(it => nameProv(it.name, it.provider)).join('<span class="muted"> vs </span>')}</b></td>
+      <td>${esc(f.dataset)}</td>
+      <td>${statusLabel(f.status)}</td>
+      <td class="num">${f.ok}/${f.n}</td>
+      <td class="num">${ms(f.ttft_p50)}</td>
+      <td class="num">${fmt(f.tps_mean)}</td>
+      <td class="num">${f.cache_supported ? pct(f.cache_hit_rate) : "N/A"}</td>
+      <td><button data-view="${esc(f.file)}">查看</button>
+          <button class="danger" data-delfile="${esc(f.file)}">删除</button></td>
+    </tr>`;});
+  tb.querySelectorAll("[data-view]").forEach(b => b.onclick = async () => {
+    try {
+      const {run_id} = await fetchJSON("/api/files/load", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({file: b.dataset.view}),
+      });
+      await loadRun(run_id);
+    } catch (e) { $("#runErr").textContent = "加载失败：" + e.message; }
+  });
+  tb.querySelectorAll("[data-delfile]").forEach(b => b.onclick = async () => {
+    if (!confirm(`删除 ${b.dataset.delfile}？`)) return;
+    try {
+      await fetchJSON(`/api/files?file=${encodeURIComponent(b.dataset.delfile)}`, {method: "DELETE"});
+      await loadFiles();
+    } catch (e) { $("#runErr").textContent = "删除失败：" + e.message; }
+  });
+}
+
+async function findActiveRun() {
+  const runs = await fetchJSON("/api/runs").catch(() => []);
+  return runs.find(r => r.status === "running" || r.status === "pending");
+}
+
+async function loadRun(runId) {
+  stopPolling(); setButtons(false);
+  state.runId = runId;
+  state.groupProfileId = null;
+  const st = await fetchJSON(`/api/run/${runId}/status`);
+  state.lastStatus = st;
+  $("#progressCard").classList.remove("hidden");
+  renderProgress(st);
+  renderResults(st);
+  $("#runState").textContent = statusLabel(st.status);
+}
+
+// ---------------- 事件绑定 ----------------
+$("#f_provider").onchange = updateFormVis;
+$("#f_thinking_enabled").onchange = updateFormVis;
+$("#btnAddProfile").onclick = () => openProfileForm(null);
+$("#btnSaveProfile").onclick = saveProfile;
+$("#btnCancelProfile").onclick = closeProfileForm;
+$("#btnStart").onclick = startRun;
+$("#btnStop").onclick = stopRun;
+$("#detailFilter").onchange = () => state.lastStatus && renderDetailTable(state.lastStatus);
+
+(async function init() {
+  try {
+    await Promise.all([loadMeta(), loadDatasets()]);
+    await loadProfiles();
+    await loadFiles();
+    const active = await findActiveRun();
+    if (active) { state.runId = active.id; setButtons(true); startPolling(); }
+  } catch (e) {
+    $("#runState").textContent = "初始化失败：" + e.message;
+  }
+})();
+</script>
+</body>
+</html>
