@@ -1,0 +1,14 @@
+[project]
+name = "tiny-llm-bench"
+version = "0.1.0"
+description = "对 OpenAI 兼容接口做压测：TTFT（首 token 延迟）与输出速度（tok/s）"
+requires-python = ">=3.9"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "httpx>=0.27",
+]
+
+# 这是个应用（扁平布局，没有包），不需要把项目本身构建安装
+[tool.uv]
+package = false
