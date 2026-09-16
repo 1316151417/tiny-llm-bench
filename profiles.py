@@ -59,32 +59,47 @@ PROVIDERS: dict[str, dict[str, Any]] = {
 _lock = threading.Lock()
 
 
-def _glm_capability(model: str) -> dict[str, Any]:
-    """GLM 各代模型的思考能力（按模型名前缀判断，新的代际按最接近的一代处理）。
+def _model_thinking_rules(model: str) -> dict[str, Any]:
+    """按模型名判断思考能力（各代/各家参数并不一致，新的型号按最接近的一代处理）。
 
     can_disable=False：强制思考，传 thinking.type=disabled 会 HTTP 400
-    efforts=None：该代不支持 reasoning_effort，只有开关
+    efforts=None：该模型没有思考档位，只有二元开关
     """
     m = (model or "").strip().lower()
+
+    # --- GLM ---
     if m.startswith("glm-5.3"):
         return {"can_disable": False, "efforts": ["low", "high", "max"]}
     if m.startswith("glm-5.2"):
         return {"can_disable": True, "efforts": ["low", "medium", "high", "max"]}
-    return {"can_disable": True, "efforts": None}  # 4.x / 5.0 / 5.1：仅二元开关
+    if m.startswith("glm-"):
+        return {"can_disable": True, "efforts": None}  # 4.x / 5.0 / 5.1：仅二元开关
+
+    # --- DeepSeek ---
+    # R1 时代（*-reasoner / deepseek-r1）：恒思考，无档位
+    if "reasoner" in m or m.startswith("deepseek-r1"):
+        return {"can_disable": False, "efforts": None}
+    # 思考模式支持 reasoning_effort: low/high/max（官方把 medium 映射为 high）
+    if m.startswith("deepseek"):
+        return {"can_disable": True, "efforts": ["low", "high", "max"]}
+
+    return {"can_disable": True, "efforts": None}
+
+
+# 只对这些「厂商自家端点」下发 reasoning_effort：
+# 网关（贝壳/自定义）的转发语义未知，不擅自加参数，避免把本来能跑的配置改坏
+_EFFORT_KNOWN_ENDPOINTS = ("deepseek", "zhipu")
 
 
 def thinking_capability(provider: str, model: str) -> dict[str, Any]:
-    """思考能力查询：前端表单与请求构造共用，保证两边判断一致。
-
-    reasoning_effort 只在智谱自家端点上发送——网关（贝壳/自定义）的转发语义未知，
-    不擅自添加参数，避免把本来能跑的配置改坏。
-    """
-    cap = _glm_capability(model)
-    on_zhipu = provider == "zhipu"
-    return {
-        "can_disable": cap["can_disable"],
-        "efforts": cap["efforts"] if on_zhipu else None,
-    }
+    """思考能力查询：前端表单与请求构造共用，保证两边判断一致。"""
+    rules = _model_thinking_rules(model)
+    on_known_endpoint = provider in _EFFORT_KNOWN_ENDPOINTS
+    efforts = rules["efforts"] if on_known_endpoint else None
+    note = ""
+    if rules["efforts"] and not on_known_endpoint:
+        note = "该模型支持思考档位，但网关端点的转发语义未确认，暂不发送"
+    return {"can_disable": rules["can_disable"], "efforts": efforts, "note": note}
 
 
 def display_name(p: dict[str, Any]) -> str:

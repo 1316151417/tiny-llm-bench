@@ -315,7 +315,13 @@ async function refreshThinkingFields(prefillLevel) {
     levelSel.value = levels.includes(cur) ? cur : (levels.includes("high") ? "high" : levels[0]);
   }
 
-  $("#thinkingHint").textContent = cap.can_disable ? "" : "该模型强制思考，不支持关闭";
+  const reasons = [];
+  if (!cap.can_disable) reasons.push("该模型强制思考，不支持关闭");
+  if (thinkOn && !levels.length) {
+    if (cap.note) reasons.push(cap.note);
+    else if (model) reasons.push("该模型不支持思考档位");  // 模型名还空着时不下结论
+  }
+  $("#thinkingHint").textContent = reasons.join("；");
   return cap;
 }
 
@@ -357,7 +363,7 @@ function renderProfiles() {
   });
 }
 
-const levelZh = l => ({low: "低", medium: "中", high: "高"}[l] || l);
+const levelZh = l => (state.meta.level_labels || {})[l] || l;
 
 // 提供商标注：name（贝壳）——provider 用弱化灰字内联，不加列宽
 const provLabel = id => (state.meta.providers.find(p => p.id === id) || {}).label || "";
@@ -760,6 +766,7 @@ async function loadRun(runId) {
 // ---------------- 事件绑定 ----------------
 $("#f_provider").onchange = updateFormVis;
 $("#f_model_select").onchange = () => { syncModelFields(); refreshThinkingFields(); };
+$("#f_model").oninput = () => refreshThinkingFields();   // 手填模型名时同步刷新思考能力
 $("#f_thinking_enabled").onchange = updateFormVis;
 $("#btnAddProfile").onclick = () => openProfileForm(null);
 $("#btnSaveProfile").onclick = saveProfile;
