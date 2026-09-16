@@ -174,30 +174,61 @@ def _prune_history() -> None:
         RUNS.pop(rid, None)
 
 
+def _per_profile_summary(records: list[dict[str, Any]],
+                         profiles_meta: Optional[list[tuple]] = None) -> list[dict[str, Any]]:
+    """按 profile 分组汇总。profiles_meta 为 [(id, name, provider)]，缺省时从 records 里取。
+
+    载入历史文件时也走这里，保证旧数据用的是当前口径（例如后加的「首响应」指标）。
+    """
+    order: list[Any] = []
+    groups: dict[Any, list] = {}
+    for r in records:
+        pid = r.get("profile_id")
+        if pid not in groups:
+            groups[pid] = []
+            order.append(pid)
+        groups[pid].append(r)
+    meta = {m[0]: m for m in (profiles_meta or [])}
+    out = []
+    for pid in order:
+        recs = groups[pid]
+        m = meta.get(pid)
+        first = recs[0]
+        out.append({
+            "profile_id": pid,
+            "profile_name": m[1] if m else first.get("profile_name"),
+            "profile_provider": m[2] if m else first.get("profile_provider"),
+            "summary": summarize(recs),
+            "by_case": summarize_grouped(recs, "case_id"),
+            "by_round": summarize_grouped(recs, "round_idx"),
+        })
+    return out
+
+
+def _backfill_metrics(payload: dict) -> None:
+    """旧落盘文件没有 first_token_ms：用 first_reason_ms（无思考时即 TTFT）补上。"""
+    for r in payload.get("records") or []:
+        if r.get("first_token_ms") is None:
+            r["first_token_ms"] = r.get("first_reason_ms") or r.get("ttft_ms")
+
+
 def _run_payload(run_id: str) -> dict[str, Any]:
     run = RUNS.get(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="运行不存在")
     engine = run["engine"]
-    if engine is None:  # 导入的历史运行：直接返回存好的 payload
+    if engine is None:  # 导入的历史运行：补齐缺失字段后按当前口径重算汇总
         payload = dict(run["payload"])
         payload["id"] = run_id
         _backfill_providers(payload)
+        _backfill_metrics(payload)
+        payload["summary"] = {"per_profile": _per_profile_summary(payload.get("records") or [])}
         return payload
     snap = engine.snapshot()
-    per_profile = []
-    for p in engine.profiles:
-        recs = [r for r in snap["records"] if r["profile_id"] == p["id"]]
-        if not recs:
-            continue
-        per_profile.append({
-            "profile_id": p["id"],
-            "profile_name": p.get("name"),
-            "profile_provider": p.get("provider"),
-            "summary": summarize(recs),
-            "by_case": summarize_grouped(recs, "case_id"),
-            "by_round": summarize_grouped(recs, "round_idx"),
-        })
+    per_profile = _per_profile_summary(
+        snap["records"],
+        [(p["id"], p.get("name"), p.get("provider")) for p in engine.profiles],
+    )
     return {
         "id": run_id,
         "status": snap["status"],

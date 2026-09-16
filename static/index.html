@@ -161,6 +161,11 @@ h3.mini:first-child { margin-top: 0; }
 
     <div id="overview"></div>
     <div class="muted" id="overviewExtra" style="font-size:12px;margin-top:8px"></div>
+    <div class="muted" style="font-size:12px;margin-top:4px">
+      <b>首响应</b> = 请求发出 → 第一个 token（思考也算）；
+      <b>TTFT</b> = 请求发出 → 第一个正文 token（即 首响应 + 思考时长）；
+      开思考的模型 TTFT 会被思考撑大，看响应快不快看「首响应」
+    </div>
 
     <div class="section-gap">
       <div class="legend" id="chartLegend"></div>
@@ -196,7 +201,8 @@ h3.mini:first-child { margin-top: 0; }
       </div>
       <table class="scroll" id="detailTable">
         <thead><tr>
-          <th>模型</th><th>样本</th><th>轮</th><th>turn</th><th>状态</th><th class="num">TTFT ms</th>
+          <th>模型</th><th>样本</th><th>轮</th><th>turn</th><th>状态</th>
+          <th class="num">首响应 ms</th><th class="num">TTFT ms</th>
           <th class="num">思考 ms</th><th class="num">总 ms</th><th class="num">tok/s</th>
           <th class="num">prompt</th><th class="num">命中</th><th>错误</th>
         </tr></thead><tbody></tbody>
@@ -549,6 +555,7 @@ function renderResults(st) {
       `${nameProvText(pps[0].profile_name, pps[0].profile_provider)} · ${$("#resultMeta").textContent}`;
     ov.innerHTML = `<div class="stat-cards">
       ${statCard(`${s.ok}/${s.n}`, `成功（失败率 ${pct(s.error_rate)}）`)}
+      ${statCard(ms(s.first_token_ms?.p50), "首响应 p50")}
       ${statCard(ms(s.ttft_ms?.mean), "TTFT 均值")}
       ${statCard(ms(s.ttft_ms?.p50), "TTFT p50")}
       ${statCard(ms(s.ttft_ms?.p95), "TTFT p95")}
@@ -565,6 +572,7 @@ function renderResults(st) {
     const anyThink = pps.some(pp => pp.summary.think_ms);
     ov.innerHTML = `<div class="tableWrap"><table><thead><tr>
       <th>模型</th><th class="num">成功</th><th class="num">失败率</th>
+      <th class="num">首响应 p50</th>
       <th class="num">TTFT 均值</th><th class="num">TTFT p50</th><th class="num">TTFT p95</th>
       <th class="num">tok/s 均值</th><th class="num">总时延 均值</th><th class="num">总时延 p50</th><th class="num">总时延 p95</th>
       ${anyThink ? '<th class="num">思考 p50</th>' : ""}
@@ -572,6 +580,7 @@ function renderResults(st) {
       ${pps.map(pp => { const s = pp.summary; return `<tr>
         <td class="ell" title="${esc(nameProvText(pp.profile_name, pp.profile_provider))}">${nameProv(pp.profile_name, pp.profile_provider, true)}</td>
         <td class="num">${s.ok}/${s.n}</td><td class="num">${pct(s.error_rate)}</td>
+        <td class="num">${ms(s.first_token_ms?.p50)}</td>
         <td class="num">${ms(s.ttft_ms?.mean)}</td>
         <td class="num">${ms(s.ttft_ms?.p50)}</td><td class="num">${ms(s.ttft_ms?.p95)}</td>
         <td class="num">${fmt(s.tps?.mean)}</td>
@@ -689,6 +698,7 @@ function renderDetailTable(st) {
       <td>${nameProv(r.profile_name, r.profile_provider)}</td><td>${esc(r.case_name)}</td>
       <td>${r.round_idx}</td><td>${r.kind === "multi" ? r.turn_idx + "/" + r.turn_total : "—"}</td>
       <td>${r.ok ? '<span class="badge ok">OK</span>' : '<span class="badge fail">FAIL</span>'}</td>
+      <td class="num">${fmt(r.first_token_ms)}</td>
       <td class="num">${fmt(r.ttft_ms)}</td><td class="num">${fmt(r.think_ms)}</td>
       <td class="num">${fmt(r.total_ms)}</td><td class="num">${fmt(r.tps)}</td>
       <td class="num">${fmt(r.prompt_tokens)}</td>

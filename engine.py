@@ -118,6 +118,7 @@ def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
         "n": len(records), "ok": len(ok), "err": errs,
         "error_rate": round(errs / len(records), 4) if records else None,
         "ttft_ms": _stats(col("ttft_ms")),
+        "first_token_ms": _stats(col("first_token_ms")),
         "tps": _stats(col("tps")),
         "total_ms": _stats(col("total_ms")),
         "think_ms": _stats(col("think_ms")),
@@ -270,7 +271,7 @@ class BenchEngine:
             "stream": self.cfg.stream,
             "ok": False, "http_status": None, "error": None,
             "start_epoch": None, "ttft_ms": None, "first_reason_ms": None,
-            "think_ms": None, "gen_ms": None, "total_ms": None, "tps": None,
+            "first_token_ms": None, "think_ms": None, "gen_ms": None, "total_ms": None, "tps": None,
             "prompt_tokens": None, "completion_tokens": None, "reasoning_tokens": None,
             "cached_tokens": None, "cache_field": None,
         }
@@ -364,6 +365,8 @@ class BenchEngine:
             if (t_first_reason is not None or t_first_content is not None) else None
         if first_any is not None:
             rec["gen_ms"] = round((t_end - first_any) * 1000, 1)
+            # 首个 token（思考也算）—— 与 ttft_ms（首正文）区分，便于把思考时长拆出来看
+            rec["first_token_ms"] = round((first_any - t0) * 1000, 1)
 
         u = parse_usage(usage)
         for k in ("prompt_tokens", "completion_tokens", "reasoning_tokens", "cached_tokens",
