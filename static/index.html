@@ -14,7 +14,7 @@ body {
   margin: 0; background: var(--bg); color: var(--fg);
   font: 14px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
 }
-.wrap { max-width: 1100px; margin: 0 auto; padding: 20px 16px 60px; }
+.wrap { max-width: min(1760px, 96vw); margin: 0 auto; padding: 20px 16px 60px; }
 h1 { font-size: 20px; margin: 0 0 4px; }
 .sub { color: var(--muted); margin-bottom: 18px; font-size: 13px; }
 .card {
@@ -24,12 +24,12 @@ h1 { font-size: 20px; margin: 0 0 4px; }
 .card h2 { font-size: 15px; margin: 0 0 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .card h2 .tag { font-size: 12px; color: var(--muted); font-weight: normal; }
 .card h2 .spacer { flex: 1; }
-table { border-collapse: collapse; width: 100%; font-size: 13px; }
-th, td { border-bottom: 1px solid var(--line); padding: 6px 8px; text-align: left; white-space: nowrap; }
+table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+th, td { border-bottom: 1px solid var(--line); padding: 5px 7px; text-align: left; white-space: nowrap; }
 th { color: var(--muted); font-weight: 500; background: #fafafa; position: sticky; top: 0; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .tableWrap { overflow-x: auto; }
-td.ell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+td.ell { max-width: 190px; overflow: hidden; text-overflow: ellipsis; }
 tr:hover td { background: #f9fafb; }
 table.scroll { display: block; max-height: 420px; overflow: auto; }
 button {
@@ -88,10 +88,10 @@ h3.mini:first-child { margin-top: 0; }
   <!-- 1. 模型管理 -->
   <div class="card">
     <h2>模型 <span class="tag">选择提供商后只需填 API Key，最多再填个模型名</span></h2>
-    <table id="profileTable">
+    <div class="tableWrap"><table id="profileTable">
       <thead><tr><th>模型</th><th>提供商</th><th>Base URL</th><th>思考</th><th></th></tr></thead>
       <tbody></tbody>
-    </table>
+    </table></div>
     <div class="muted" id="profileEmpty" style="padding:8px 0">还没有模型，点下面添加。</div>
     <div style="margin-top:10px"><button class="primary" id="btnAddProfile">＋ 添加模型</button></div>
     <div id="profileForm" class="hidden">
@@ -183,15 +183,15 @@ h3.mini:first-child { margin-top: 0; }
       <summary>分组统计</summary>
       <div class="row" id="groupProfileSel" style="margin-bottom:10px"></div>
       <h3 class="mini">按样本（输入长度维度）</h3>
-      <table id="byCaseTable">
+      <div class="tableWrap"><table id="byCaseTable">
         <thead><tr><th>样本</th><th class="num">成功/总数</th><th class="num">TTFT p50</th><th class="num">TTFA p50</th><th class="num">tok/s</th><th class="num">缓存命中</th></tr></thead>
         <tbody></tbody>
-      </table>
+      </table></div>
       <h3 class="mini">按轮次（缓存暖起：第 1 轮 miss，后续轮命中）</h3>
-      <table id="byRoundTable">
+      <div class="tableWrap"><table id="byRoundTable">
         <thead><tr><th>轮次</th><th class="num">成功/总数</th><th class="num">TTFT p50</th><th class="num">缓存命中</th></tr></thead>
         <tbody></tbody>
-      </table>
+      </table></div>
     </details>
 
     <details id="detailSection">
@@ -244,6 +244,8 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt
 const fmt = (v, unit="") => v === null || v === undefined ? "—" : (typeof v === "number" ? (Math.round(v*100)/100).toLocaleString() : v) + unit;
 const pct = v => v === null || v === undefined ? "—" : (v*100).toFixed(1) + "%";
 const ms  = v => v === null || v === undefined ? "—" : v >= 10000 ? (v/1000).toFixed(1)+" s" : Math.round(v).toLocaleString()+" ms";
+// 表格专用紧凑格式：超过 2 秒就用秒，省掉几千毫秒的宽度
+const msC = v => v === null || v === undefined ? "—" : v >= 2000 ? (v/1000).toFixed(1)+" s" : Math.round(v).toLocaleString()+" ms";
 const cacheRate = r => r.cached_tokens === null || r.cached_tokens === undefined || !r.prompt_tokens ? "—" : (r.cached_tokens/r.prompt_tokens*100).toFixed(0)+"%";
 
 async function fetchJSON(url, opts) {
@@ -578,20 +580,20 @@ function renderResults(st) {
     ov.innerHTML = `<div class="tableWrap"><table><thead><tr>
       <th>模型</th><th class="num">成功</th><th class="num">失败率</th>
       <th class="num">TTFT 均值</th><th class="num">TTFT p50</th><th class="num">TTFT p95</th>
-      ${anyThink ? '<th class="num">思考阶段 p50</th>' : ""}
+      ${anyThink ? '<th class="num">思考 p50</th>' : ""}
       ${anyThink ? '<th class="num">TTFA p50</th><th class="num">TTFA p95</th>' : ""}
       <th class="num">tok/s 均值</th><th class="num">总时延 均值</th><th class="num">总时延 p50</th><th class="num">总时延 p95</th>
       <th class="num">缓存命中</th></tr></thead><tbody>
       ${pps.map(pp => { const s = pp.summary; return `<tr>
         <td class="ell" title="${esc(nameProvText(pp.profile_name, pp.profile_provider))}">${nameProv(pp.profile_name, pp.profile_provider, true)}</td>
         <td class="num">${s.ok}/${s.n}</td><td class="num">${pct(s.error_rate)}</td>
-        <td class="num">${ms(s.ttft_ms?.mean)}</td>
-        <td class="num">${ms(s.ttft_ms?.p50)}</td><td class="num">${ms(s.ttft_ms?.p95)}</td>
-        ${anyThink ? `<td class="num">${ms(s.think_ms?.p50)}</td>` : ""}
-        ${anyThink ? `<td class="num">${ms(s.ttfa_ms?.p50)}</td><td class="num">${ms(s.ttfa_ms?.p95)}</td>` : ""}
+        <td class="num">${msC(s.ttft_ms?.mean)}</td>
+        <td class="num">${msC(s.ttft_ms?.p50)}</td><td class="num">${msC(s.ttft_ms?.p95)}</td>
+        ${anyThink ? `<td class="num">${msC(s.think_ms?.p50)}</td>` : ""}
+        ${anyThink ? `<td class="num">${msC(s.ttfa_ms?.p50)}</td><td class="num">${msC(s.ttfa_ms?.p95)}</td>` : ""}
         <td class="num">${fmt(s.tps?.mean)}</td>
-        <td class="num">${ms(s.total_ms?.mean)}</td>
-        <td class="num">${ms(s.total_ms?.p50)}</td><td class="num">${ms(s.total_ms?.p95)}</td>
+        <td class="num">${msC(s.total_ms?.mean)}</td>
+        <td class="num">${msC(s.total_ms?.p50)}</td><td class="num">${msC(s.total_ms?.p95)}</td>
         <td class="num">${s.cache_supported ? pct(s.cache_hit_rate) : "N/A"}</td></tr>`; }).join("")}
     </tbody></table></div>`;
     extra.textContent = "";
@@ -710,7 +712,7 @@ function renderDetailTable(st) {
       <td>${r.round_idx}</td><td>${r.kind === "multi" ? r.turn_idx + "/" + r.turn_total : "—"}</td>
       <td>${r.ok ? '<span class="badge ok">OK</span>' : '<span class="badge fail">FAIL</span>'}</td>
       <td class="num">${fmt(r.ttft_ms)}</td><td class="num">${fmt(r.think_ms)}</td>
-      <td class="num">${fmt(r.ttfa_ms)}</td><td class="num">${fmt(r.total_ms)}</td><td class="num">${fmt(r.tps)}</td>
+      <td class="num">${fmt(r.ttfa_ms)}</td><td class="num">${msC(r.total_ms)}</td><td class="num">${fmt(r.tps)}</td>
       <td class="num">${fmt(r.prompt_tokens)}</td>
       <td class="num">${r.cached_tokens === null ? "—" : fmt(r.cached_tokens)}</td>
       <td class="muted" title="${esc(r.error)}">${esc((r.error || "").slice(0, 60))}</td>
@@ -742,7 +744,7 @@ async function loadFiles() {
       <td>${esc(f.dataset)}</td>
       <td>${statusLabel(f.status)}</td>
       <td class="num">${f.ok}/${f.n}</td>
-      <td class="num">${ms(f.ttft_p50)}</td>
+      <td class="num">${msC(f.ttft_p50)}</td>
       <td class="num">${fmt(f.tps_mean)}</td>
       <td class="num">${f.cache_supported ? pct(f.cache_hit_rate) : "N/A"}</td>
       <td><button data-view="${esc(f.file)}">查看</button>
