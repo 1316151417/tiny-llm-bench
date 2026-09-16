@@ -36,7 +36,7 @@ PROVIDERS: dict[str, dict[str, Any]] = {
         "thinking_style": "thinking-type",
     },
     "zhipu": {
-        "label": "智谱",
+        "label": "智谱 Coding Plan",
         "base_url": "https://open.bigmodel.cn/api/coding/paas/v4",
         # 列表仅作下拉候选，界面上可选「自定义」填其他模型
         "models": ["glm-4.6", "glm-4.5", "glm-4.5-air"],
