@@ -104,11 +104,11 @@ h3.mini:first-child { margin-top: 0; }
         <div id="f_baseurl_fixed_wrap"><div class="f">Base URL<div class="fixedval" id="f_baseurl_fixed"></div></div></div>
         <label class="f">思考开关<select id="f_thinking_enabled">
           <option value="0">关闭</option><option value="1">开启</option></select></label>
-        <label class="f" id="f_level_wrap">思考程度<select id="f_thinking_level">
-          <option value="low">低</option><option value="medium" selected>中</option><option value="high">高</option></select></label>
+        <label class="f hidden" id="f_level_wrap">思考程度<select id="f_thinking_level"></select></label>
         <label class="f hidden" id="f_style_wrap">思考参数风格<select id="f_thinking_style"></select></label>
       </div>
       <div class="err" id="profileFormErr"></div>
+      <div class="muted" id="thinkingHint" style="font-size:12px"></div>
       <div class="row" style="margin-top:8px">
         <button class="primary" id="btnSaveProfile">保存</button>
         <button id="btnCancelProfile">取消</button>
@@ -283,17 +283,52 @@ function modelValue() {
     ? $("#f_model").value.trim() : $("#f_model_select").value;
 }
 
+// 思考字段：是否可关、可选的思考档位由后端按 提供商+模型 判定（避免前后端判断不一致）
+let thinkSeq = 0;   // 防竞态：只让最后一次查询的结果生效
+async function refreshThinkingFields(prefillLevel) {
+  const seq = ++thinkSeq;
+  const provider = $("#f_provider").value;
+  const model = modelValue() || (presetModels() || [])[0] || "";
+  let cap = {can_disable: true, efforts: null};
+  try {
+    cap = await fetchJSON(`/api/capability?provider=${encodeURIComponent(provider)}&model=${encodeURIComponent(model)}`);
+  } catch (e) { /* 取不到就按最宽松处理 */ }
+  if (seq !== thinkSeq) return cap;
+
+  const toggle = $("#f_thinking_enabled");
+  if (!cap.can_disable) {
+    toggle.value = "1";
+    toggle.disabled = true;
+  } else {
+    toggle.disabled = false;
+  }
+  const thinkOn = toggle.value === "1";
+
+  // 档位：仅当模型支持 reasoning_effort 时才需要选
+  const levelSel = $("#f_thinking_level");
+  const levels = cap.efforts || [];
+  $("#f_level_wrap").classList.toggle("hidden", !(thinkOn && levels.length));
+  if (levels.length) {
+    const cur = prefillLevel && levels.includes(prefillLevel) ? prefillLevel : levelSel.value;
+    levelSel.innerHTML = levels.map(l =>
+      `<option value="${l}">${esc((state.meta.level_labels || {})[l] || l)}</option>`).join("");
+    levelSel.value = levels.includes(cur) ? cur : (levels.includes("high") ? "high" : levels[0]);
+  }
+
+  $("#thinkingHint").textContent = cap.can_disable ? "" : "该模型强制思考，不支持关闭";
+  return cap;
+}
+
 function updateFormVis() {
   const p = $("#f_provider").value;
   const prov = providerOf(p);
   const fixedUrl = p !== "custom";
   const thinkOn = $("#f_thinking_enabled").value === "1";
-  syncModelFields("");
+  syncModelFields(null);
+  refreshThinkingFields();
   $("#f_baseurl_wrap").classList.toggle("hidden", fixedUrl);
   $("#f_baseurl_fixed_wrap").classList.toggle("hidden", !fixedUrl);
   if (fixedUrl) $("#f_baseurl_fixed").textContent = prov.base_url || "";
-  // 思考关了就不问程度和风格
-  $("#f_level_wrap").classList.toggle("hidden", !thinkOn);
   $("#f_style_wrap").classList.toggle("hidden", !thinkOn || !!prov.style_fixed);
 }
 
@@ -345,8 +380,8 @@ function openProfileForm(id) {
   $("#f_api_key").value = p.api_key || "";
   $("#f_base_url").value = p.provider === "custom" ? (p.base_url || "") : "";
   $("#f_thinking_enabled").value = p.thinking_enabled ? "1" : "0";
-  $("#f_thinking_level").value = p.thinking_level || "medium";
   $("#f_thinking_style").value = p.thinking_style || "thinking-type";
+  refreshThinkingFields(p.thinking_level);   // 按最终模型铺档位并回填，以这次为准
   $("#profileFormErr").textContent = "";
   $("#profileForm").classList.remove("hidden");
   $("#f_api_key").focus();
@@ -724,7 +759,7 @@ async function loadRun(runId) {
 
 // ---------------- 事件绑定 ----------------
 $("#f_provider").onchange = updateFormVis;
-$("#f_model_select").onchange = () => syncModelFields();
+$("#f_model_select").onchange = () => { syncModelFields(); refreshThinkingFields(); };
 $("#f_thinking_enabled").onchange = updateFormVis;
 $("#btnAddProfile").onclick = () => openProfileForm(null);
 $("#btnSaveProfile").onclick = saveProfile;

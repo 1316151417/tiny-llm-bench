@@ -18,7 +18,7 @@ PROFILES_PATH = DATA_DIR / "profiles.json"
 THINKING_LEVELS = ["low", "medium", "high"]
 THINKING_STYLES = ["thinking-type", "openai", "qwen", "custom"]
 
-LEVEL_LABELS = {"low": "低", "medium": "中", "high": "高"}
+LEVEL_LABELS = {"low": "低", "medium": "中", "high": "高", "max": "最高"}
 
 STYLE_LABELS = {
     "thinking-type": "DeepSeek / GLM / 智谱（thinking.type）",
@@ -39,7 +39,7 @@ PROVIDERS: dict[str, dict[str, Any]] = {
         "label": "智谱 Coding Plan",
         "base_url": "https://open.bigmodel.cn/api/coding/paas/v4",
         # 列表仅作下拉候选，界面上可选「自定义」填其他模型
-        "models": ["glm-4.6", "glm-4.5", "glm-4.5-air"],
+        "models": ["glm-5.3", "glm-5.3-flash", "glm-4.6", "glm-4.5", "glm-4.5-air"],
         "thinking_style": "thinking-type",
     },
     "beike": {
@@ -57,6 +57,34 @@ PROVIDERS: dict[str, dict[str, Any]] = {
 }
 
 _lock = threading.Lock()
+
+
+def _glm_capability(model: str) -> dict[str, Any]:
+    """GLM 各代模型的思考能力（按模型名前缀判断，新的代际按最接近的一代处理）。
+
+    can_disable=False：强制思考，传 thinking.type=disabled 会 HTTP 400
+    efforts=None：该代不支持 reasoning_effort，只有开关
+    """
+    m = (model or "").strip().lower()
+    if m.startswith("glm-5.3"):
+        return {"can_disable": False, "efforts": ["low", "high", "max"]}
+    if m.startswith("glm-5.2"):
+        return {"can_disable": True, "efforts": ["low", "medium", "high", "max"]}
+    return {"can_disable": True, "efforts": None}  # 4.x / 5.0 / 5.1：仅二元开关
+
+
+def thinking_capability(provider: str, model: str) -> dict[str, Any]:
+    """思考能力查询：前端表单与请求构造共用，保证两边判断一致。
+
+    reasoning_effort 只在智谱自家端点上发送——网关（贝壳/自定义）的转发语义未知，
+    不擅自添加参数，避免把本来能跑的配置改坏。
+    """
+    cap = _glm_capability(model)
+    on_zhipu = provider == "zhipu"
+    return {
+        "can_disable": cap["can_disable"],
+        "efforts": cap["efforts"] if on_zhipu else None,
+    }
 
 
 def display_name(p: dict[str, Any]) -> str:
@@ -90,9 +118,13 @@ def _normalize(raw: dict[str, Any], existing_id: Optional[str] = None) -> dict[s
         else:
             raise ValueError("模型名不能为空")
 
+    cap = thinking_capability(provider, model)
+
+    # 思考程度：模型支持档位时按档位校验并归一（旧配置的 medium 在 GLM-5.3 上非法）
     level = str(raw.get("thinking_level") or "medium")
-    if level not in THINKING_LEVELS:
-        raise ValueError(f"思考程度必须是 {THINKING_LEVELS} 之一")
+    levels = cap["efforts"] or THINKING_LEVELS
+    if level not in levels:
+        level = "high" if "high" in levels else levels[0]
 
     if PROVIDERS[provider]["thinking_style"]:
         style = PROVIDERS[provider]["thinking_style"]
@@ -107,7 +139,8 @@ def _normalize(raw: dict[str, Any], existing_id: Optional[str] = None) -> dict[s
         "base_url": base_url,
         "api_key": str(raw.get("api_key", "") or ""),
         "model": model,
-        "thinking_enabled": bool(raw.get("thinking_enabled", False)),
+        # 强制思考的模型（如 GLM-5.3）不接受关闭，落库即为开启
+        "thinking_enabled": True if not cap["can_disable"] else bool(raw.get("thinking_enabled", False)),
         "thinking_level": level,
         "thinking_style": style,
     }
@@ -198,19 +231,27 @@ def delete_profile(profile_id: str) -> list[dict[str, Any]]:
 def build_request_body_extras(profile: dict[str, Any]) -> dict[str, Any]:
     """根据思考配置生成要合并进请求体的额外字段（纯函数，便于测试）。
 
-    - openai:       开 → {"reasoning_effort": level}；关 → 不加
     - thinking-type: 开 → {"thinking": {"type": "enabled"}}；关 → {"type": "disabled"}
+      强制思考的模型（GLM-5.3 等）即使配了关闭也发 enabled —— 传 disabled 会 HTTP 400
+      该模型支持 reasoning_effort 时，一并带上档位
+    - openai:       开 → {"reasoning_effort": level}；关 → 不加
     - qwen:         {"enable_thinking": bool}
     - custom:       不生成任何字段
     """
     style = profile.get("thinking_style") or "thinking-type"
-    enabled = bool(profile.get("thinking_enabled"))
     level = profile.get("thinking_level") or "medium"
+    cap = thinking_capability(profile.get("provider", ""), profile.get("model", ""))
+    enabled = True if not cap["can_disable"] else bool(profile.get("thinking_enabled"))
 
     if style == "openai":
         return {"reasoning_effort": level} if enabled else {}
     if style == "thinking-type":
-        return {"thinking": {"type": "enabled" if enabled else "disabled"}}
+        if not enabled:
+            return {"thinking": {"type": "disabled"}}
+        extras: dict[str, Any] = {"thinking": {"type": "enabled"}}
+        if cap["efforts"] and level in cap["efforts"]:
+            extras["reasoning_effort"] = level
+        return extras
     if style == "qwen":
         return {"enable_thinking": enabled}
     return {}

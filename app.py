@@ -52,11 +52,18 @@ def meta():
             for pid, p in profiles_mod.PROVIDERS.items()
         ],
         "thinking_levels": profiles_mod.THINKING_LEVELS,
+        "level_labels": profiles_mod.LEVEL_LABELS,
         "thinking_styles": [
             {"id": s, "label": profiles_mod.STYLE_LABELS.get(s, s)}
             for s in profiles_mod.THINKING_STYLES
         ],
     }
+
+
+@app.get("/api/capability")
+def capability(provider: str = "", model: str = ""):
+    """某个提供商+模型的思考能力，前端表单据此决定开关是否可关、档位有哪些。"""
+    return profiles_mod.thinking_capability(provider, model)
 
 
 @app.post("/api/profiles")
