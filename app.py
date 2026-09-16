@@ -205,11 +205,48 @@ def _per_profile_summary(records: list[dict[str, Any]],
     return out
 
 
-def _backfill_metrics(payload: dict) -> None:
-    """旧落盘文件没有 first_token_ms：用 first_reason_ms（无思考时即 TTFT）补上。"""
+SCHEMA = 2  # 2: ttft_ms = 首个 token（含思考），ttfa_ms = 首个正文 token
+#           1: 旧的 ttft_ms 指的是「首个正文 token」，且没有 TTFT 字段
+
+
+def _migrate_payload(payload: dict) -> None:
+    """把旧口径的记录补齐/改名到当前口径，使历史文件无需重跑也能正确展示。
+
+    旧 -> 新：
+      ttft_ms(首正文)          -> ttfa_ms
+      first_token_ms/first_reason_ms(首个 token) -> ttft_ms
+      两者之差                  -> think_ms
+    """
+    if payload.get("schema", 1) >= SCHEMA:
+        return
     for r in payload.get("records") or []:
-        if r.get("first_token_ms") is None:
-            r["first_token_ms"] = r.get("first_reason_ms") or r.get("ttft_ms")
+        old_answer_first = r.get("ttft_ms")            # 旧口径：首个正文 token
+        first_any = r.get("first_token_ms")
+        if first_any is None:
+            first_any = r.get("first_reason_ms")       # 更早版本只存了这个
+        if first_any is None:
+            first_any = old_answer_first               # 无思考的模型两者相同
+        r["ttfa_ms"] = r.get("ttfa_ms") if r.get("ttfa_ms") is not None else old_answer_first
+        r["ttft_ms"] = first_any
+        if r.get("ttft_ms") is not None and r.get("ttfa_ms") is not None:
+            think = round(r["ttfa_ms"] - r["ttft_ms"], 1)
+            r["think_ms"] = think if think > 0 else None
+        r.pop("first_reason_ms", None)
+        r.pop("first_token_ms", None)
+    payload["schema"] = SCHEMA
+
+
+def _load_run_file(path: Path) -> Optional[dict]:
+    """读取落盘文件并补齐到当前口径（provider 推断 + 指标改名）。"""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(data, dict) or not data.get("records"):
+        return None
+    _migrate_payload(data)
+    _backfill_providers(data)
+    return data
 
 
 def _run_payload(run_id: str) -> dict[str, Any]:
@@ -217,11 +254,11 @@ def _run_payload(run_id: str) -> dict[str, Any]:
     if not run:
         raise HTTPException(status_code=404, detail="运行不存在")
     engine = run["engine"]
-    if engine is None:  # 导入的历史运行：补齐缺失字段后按当前口径重算汇总
+    if engine is None:  # 载入的历史运行：补齐字段后按当前口径重算汇总
         payload = dict(run["payload"])
         payload["id"] = run_id
+        _migrate_payload(payload)
         _backfill_providers(payload)
-        _backfill_metrics(payload)
         payload["summary"] = {"per_profile": _per_profile_summary(payload.get("records") or [])}
         return payload
     snap = engine.snapshot()
@@ -244,6 +281,7 @@ def _run_payload(run_id: str) -> dict[str, Any]:
             "current_profile": snap["current_profile"],
         },
         "summary": {"per_profile": per_profile},
+        "schema": SCHEMA,
         "records": snap["records"],
     }
 
@@ -306,7 +344,7 @@ def _register_payload(payload: dict) -> str:
 
 # ---------------------------------------------------------------- 落盘文件
 
-_THINK_SUFFIX = re.compile(r"·思考(低|中|高)$")
+_THINK_SUFFIX = re.compile(r"·思考(低|中|最高|高)$")
 
 
 def _infer_provider(display_name: Optional[str]) -> Optional[str]:
@@ -338,12 +376,11 @@ def list_files():
     out = []
     if RUNS_DIR.exists():
         for p in RUNS_DIR.glob("bench-*.json"):
-            try:
-                data = json.loads(p.read_text(encoding="utf-8"))
-                records = data.get("records") or []
-                s = summarize(records)
-            except (json.JSONDecodeError, OSError, ValueError):
+            data = _load_run_file(p)
+            if data is None:
                 continue
+            records = data["records"]
+            s = summarize(records)
             # 模型名 -> 提供商（按出现顺序）；旧文件没有 provider 字段则为 None
             seen: list[str] = []
             prov_of: dict[str, Any] = {}
@@ -385,7 +422,6 @@ def load_file(body: dict = Body(...)):
     if not payload.get("records") or not payload.get("summary"):
         raise HTTPException(status_code=422, detail="文件格式不对：缺少 records / summary")
     return {"run_id": _register_payload(payload), "n_records": len(payload["records"])}
-
 
 @app.delete("/api/files")
 def delete_file(file: str):

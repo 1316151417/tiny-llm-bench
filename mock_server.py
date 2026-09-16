@@ -53,9 +53,16 @@ async def chat_completions(req: dict, request: Request):
     if "fail" in model:
         return JSONResponse(status_code=429, content={"error": {"message": "mock rate limited"}})
 
-    thinking = "think" in model or any(
-        k in body_extra for k in ("thinking", "enable_thinking", "reasoning_effort")
-    )
+    # 是否输出思考流：看请求里思考参数的「值」，而不是「有没有这个参数」
+    # （客户端关闭思考时会发 thinking.type=disabled，不能据此认为要思考）
+    thinking = "think" in model
+    think_param = body_extra.get("thinking")
+    if isinstance(think_param, dict):
+        thinking = think_param.get("type") != "disabled"
+    elif "enable_thinking" in body_extra:
+        thinking = bool(body_extra["enable_thinking"])
+    elif "reasoning_effort" in body_extra:
+        thinking = True
 
     prompt_chars = sum(len(str(m.get("content") or "")) for m in messages)
     prompt_tokens = max(1, prompt_chars // 2)

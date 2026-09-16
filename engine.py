@@ -118,7 +118,7 @@ def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
         "n": len(records), "ok": len(ok), "err": errs,
         "error_rate": round(errs / len(records), 4) if records else None,
         "ttft_ms": _stats(col("ttft_ms")),
-        "first_token_ms": _stats(col("first_token_ms")),
+        "ttfa_ms": _stats(col("ttfa_ms")),
         "tps": _stats(col("tps")),
         "total_ms": _stats(col("total_ms")),
         "think_ms": _stats(col("think_ms")),
@@ -270,8 +270,8 @@ class BenchEngine:
             "round_idx": round_idx, "turn_idx": turn_idx, "turn_total": turn_total,
             "stream": self.cfg.stream,
             "ok": False, "http_status": None, "error": None,
-            "start_epoch": None, "ttft_ms": None, "first_reason_ms": None,
-            "first_token_ms": None, "think_ms": None, "gen_ms": None, "total_ms": None, "tps": None,
+            "start_epoch": None, "ttft_ms": None, "ttfa_ms": None,
+            "think_ms": None, "gen_ms": None, "total_ms": None, "tps": None,
             "prompt_tokens": None, "completion_tokens": None, "reasoning_tokens": None,
             "cached_tokens": None, "cache_field": None,
         }
@@ -354,19 +354,26 @@ class BenchEngine:
         self._fill_metrics(rec, t0, None, None, t_end, usage)
 
     def _fill_metrics(self, rec, t0, t_first_reason, t_first_content, t_end, usage) -> None:
+        """按标准口径记录三个时间点：
+
+        TTFT = 首个 token（开了思考时，第一个思考 token 也算）—— 多快开始有输出
+        TTFA = 首个正文 token —— 用户多快看到答案
+        思考阶段 = TTFA − TTFT
+        """
         rec["total_ms"] = round((t_end - t0) * 1000, 1)
-        if t_first_content is not None:
-            rec["ttft_ms"] = round((t_first_content - t0) * 1000, 1)
-        if t_first_reason is not None:
-            rec["first_reason_ms"] = round((t_first_reason - t0) * 1000, 1)
-        if t_first_reason is not None and t_first_content is not None:
-            rec["think_ms"] = round((t_first_content - t_first_reason) * 1000, 1)
-        first_any = min(x for x in (t_first_reason, t_first_content) if x is not None) \
-            if (t_first_reason is not None or t_first_content is not None) else None
+
+        first_any = None
+        for t in (t_first_reason, t_first_content):
+            if t is not None and (first_any is None or t < first_any):
+                first_any = t
         if first_any is not None:
+            rec["ttft_ms"] = round((first_any - t0) * 1000, 1)
             rec["gen_ms"] = round((t_end - first_any) * 1000, 1)
-            # 首个 token（思考也算）—— 与 ttft_ms（首正文）区分，便于把思考时长拆出来看
-            rec["first_token_ms"] = round((first_any - t0) * 1000, 1)
+        if t_first_content is not None:
+            rec["ttfa_ms"] = round((t_first_content - t0) * 1000, 1)
+        if rec.get("ttft_ms") is not None and rec.get("ttfa_ms") is not None:
+            think = round(rec["ttfa_ms"] - rec["ttft_ms"], 1)
+            rec["think_ms"] = think if think > 0 else None  # 无思考的模型两者相等
 
         u = parse_usage(usage)
         for k in ("prompt_tokens", "completion_tokens", "reasoning_tokens", "cached_tokens",

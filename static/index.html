@@ -162,15 +162,18 @@ h3.mini:first-child { margin-top: 0; }
     <div id="overview"></div>
     <div class="muted" id="overviewExtra" style="font-size:12px;margin-top:8px"></div>
     <div class="muted" style="font-size:12px;margin-top:4px">
-      <b>首响应</b> = 请求发出 → 第一个 token（思考也算）；
-      <b>TTFT</b> = 请求发出 → 第一个正文 token（即 首响应 + 思考时长）；
-      开思考的模型 TTFT 会被思考撑大，看响应快不快看「首响应」
+      请求 → <b>TTFT</b>（首个 token，思考的第一个字也算）→ 思考阶段 → <b>TTFA</b>（首个正文 token）→ 完成。
+      开思考的模型如果只看 TTFT，会掩盖用户真正等了多久 —— 看 TTFA 才是"多快看到答案"
     </div>
 
     <div class="section-gap">
       <div class="legend" id="chartLegend"></div>
-      <h3 class="mini">TTFT（ms，越低越好）</h3>
+      <h3 class="mini">TTFT（ms，首个 token，越低越好）</h3>
       <canvas id="ttftChart"></canvas>
+      <div id="ttfaChartWrap" class="hidden">
+        <h3 class="mini">TTFA（ms，首个正文 token，越低越好）</h3>
+        <canvas id="ttfaChart"></canvas>
+      </div>
       <h3 class="mini">输出速度 tok/s（越高越好）</h3>
       <canvas id="tpsChart"></canvas>
       <div class="muted" style="font-size:12px;margin-top:-2px">每个点是一次请求，横轴为请求序号 —— 看波动与离群点。</div>
@@ -181,7 +184,7 @@ h3.mini:first-child { margin-top: 0; }
       <div class="row" id="groupProfileSel" style="margin-bottom:10px"></div>
       <h3 class="mini">按样本（输入长度维度）</h3>
       <table id="byCaseTable">
-        <thead><tr><th>样本</th><th class="num">成功/总数</th><th class="num">TTFT p50</th><th class="num">tok/s</th><th class="num">缓存命中</th></tr></thead>
+        <thead><tr><th>样本</th><th class="num">成功/总数</th><th class="num">TTFT p50</th><th class="num">TTFA p50</th><th class="num">tok/s</th><th class="num">缓存命中</th></tr></thead>
         <tbody></tbody>
       </table>
       <h3 class="mini">按轮次（缓存暖起：第 1 轮 miss，后续轮命中）</h3>
@@ -202,8 +205,8 @@ h3.mini:first-child { margin-top: 0; }
       <table class="scroll" id="detailTable">
         <thead><tr>
           <th>模型</th><th>样本</th><th>轮</th><th>turn</th><th>状态</th>
-          <th class="num">首响应 ms</th><th class="num">TTFT ms</th>
-          <th class="num">思考 ms</th><th class="num">总 ms</th><th class="num">tok/s</th>
+          <th class="num">TTFT ms</th><th class="num">思考 ms</th><th class="num">TTFA ms</th>
+          <th class="num">总 ms</th><th class="num">tok/s</th>
           <th class="num">prompt</th><th class="num">命中</th><th>错误</th>
         </tr></thead><tbody></tbody>
       </table>
@@ -555,16 +558,18 @@ function renderResults(st) {
       `${nameProvText(pps[0].profile_name, pps[0].profile_provider)} · ${$("#resultMeta").textContent}`;
     ov.innerHTML = `<div class="stat-cards">
       ${statCard(`${s.ok}/${s.n}`, `成功（失败率 ${pct(s.error_rate)}）`)}
-      ${statCard(ms(s.first_token_ms?.p50), "首响应 p50")}
       ${statCard(ms(s.ttft_ms?.mean), "TTFT 均值")}
       ${statCard(ms(s.ttft_ms?.p50), "TTFT p50")}
       ${statCard(ms(s.ttft_ms?.p95), "TTFT p95")}
+      ${s.think_ms ? statCard(ms(s.think_ms.p50), "思考阶段 p50") : ""}
+      ${s.think_ms ? statCard(ms(s.ttfa_ms?.mean), "TTFA 均值") : ""}
+      ${s.think_ms ? statCard(ms(s.ttfa_ms?.p50), "TTFA p50") : ""}
+      ${s.think_ms ? statCard(ms(s.ttfa_ms?.p95), "TTFA p95") : ""}
       ${statCard(fmt(s.tps?.mean), "tok/s 均值")}
       ${statCard(ms(s.total_ms?.mean), "总时延 均值")}
       ${statCard(ms(s.total_ms?.p50), "总时延 p50")}
       ${statCard(ms(s.total_ms?.p95), "总时延 p95")}
       ${statCard(s.cache_supported ? pct(s.cache_hit_rate) : "N/A", "缓存命中率")}
-      ${s.think_ms ? statCard(ms(s.think_ms.p50), "思考时长 p50") : ""}
     </div>`;
     extra.textContent = `聚合吞吐 ${fmt(s.throughput_tps)} tok/s · 墙钟 ${fmt(s.wall_s)} s` +
       (s.cache_supported ? "" : " · 服务商未返回缓存字段，命中率 N/A");
@@ -572,21 +577,21 @@ function renderResults(st) {
     const anyThink = pps.some(pp => pp.summary.think_ms);
     ov.innerHTML = `<div class="tableWrap"><table><thead><tr>
       <th>模型</th><th class="num">成功</th><th class="num">失败率</th>
-      <th class="num">首响应 p50</th>
       <th class="num">TTFT 均值</th><th class="num">TTFT p50</th><th class="num">TTFT p95</th>
+      ${anyThink ? '<th class="num">思考阶段 p50</th>' : ""}
+      ${anyThink ? '<th class="num">TTFA p50</th><th class="num">TTFA p95</th>' : ""}
       <th class="num">tok/s 均值</th><th class="num">总时延 均值</th><th class="num">总时延 p50</th><th class="num">总时延 p95</th>
-      ${anyThink ? '<th class="num">思考 p50</th>' : ""}
       <th class="num">缓存命中</th></tr></thead><tbody>
       ${pps.map(pp => { const s = pp.summary; return `<tr>
         <td class="ell" title="${esc(nameProvText(pp.profile_name, pp.profile_provider))}">${nameProv(pp.profile_name, pp.profile_provider, true)}</td>
         <td class="num">${s.ok}/${s.n}</td><td class="num">${pct(s.error_rate)}</td>
-        <td class="num">${ms(s.first_token_ms?.p50)}</td>
         <td class="num">${ms(s.ttft_ms?.mean)}</td>
         <td class="num">${ms(s.ttft_ms?.p50)}</td><td class="num">${ms(s.ttft_ms?.p95)}</td>
+        ${anyThink ? `<td class="num">${ms(s.think_ms?.p50)}</td>` : ""}
+        ${anyThink ? `<td class="num">${ms(s.ttfa_ms?.p50)}</td><td class="num">${ms(s.ttfa_ms?.p95)}</td>` : ""}
         <td class="num">${fmt(s.tps?.mean)}</td>
         <td class="num">${ms(s.total_ms?.mean)}</td>
         <td class="num">${ms(s.total_ms?.p50)}</td><td class="num">${ms(s.total_ms?.p95)}</td>
-        ${anyThink ? `<td class="num">${ms(s.think_ms?.p50)}</td>` : ""}
         <td class="num">${s.cache_supported ? pct(s.cache_hit_rate) : "N/A"}</td></tr>`; }).join("")}
     </tbody></table></div>`;
     extra.textContent = "";
@@ -606,7 +611,12 @@ function renderCharts(st) {
   }));
   $("#chartLegend").innerHTML = series.map(s =>
     `<span><i style="background:${s.color}"></i>${nameProv(s.name, s.provider)}</span>`).join("") || `<span>无流式数据</span>`;
+  const anyThink = st.summary.per_profile.some(pp => pp.summary.think_ms);
   drawChart($("#ttftChart"), series, r => r.ttft_ms, v => v >= 10000 ? (v/1000).toFixed(0)+"s" : Math.round(v));
+  $("#ttfaChartWrap").classList.toggle("hidden", !anyThink);
+  if (anyThink) {
+    drawChart($("#ttfaChart"), series, r => r.ttfa_ms, v => v >= 10000 ? (v/1000).toFixed(0)+"s" : Math.round(v));
+  }
   drawChart($("#tpsChart"), series, r => r.tps, v => Math.round(v));
 }
 
@@ -672,7 +682,8 @@ function renderGroups(st, pps) {
     const x = g.summary;
     return `<tr>
       <td>${esc(g.label || g.key)}</td><td class="num">${x.ok}/${x.n}</td>
-      <td class="num">${ms(x.ttft_ms?.p50)}</td><td class="num">${fmt(x.tps?.mean)}</td>
+      <td class="num">${ms(x.ttft_ms?.p50)}</td><td class="num">${ms(x.ttfa_ms?.p50)}</td>
+      <td class="num">${fmt(x.tps?.mean)}</td>
       <td class="num">${x.cache_supported ? pct(x.cache_hit_rate) : "N/A"}</td></tr>`;
   }).join("");
   $("#byRoundTable tbody").innerHTML = pp.by_round.map(g => {
@@ -698,9 +709,8 @@ function renderDetailTable(st) {
       <td>${nameProv(r.profile_name, r.profile_provider)}</td><td>${esc(r.case_name)}</td>
       <td>${r.round_idx}</td><td>${r.kind === "multi" ? r.turn_idx + "/" + r.turn_total : "—"}</td>
       <td>${r.ok ? '<span class="badge ok">OK</span>' : '<span class="badge fail">FAIL</span>'}</td>
-      <td class="num">${fmt(r.first_token_ms)}</td>
       <td class="num">${fmt(r.ttft_ms)}</td><td class="num">${fmt(r.think_ms)}</td>
-      <td class="num">${fmt(r.total_ms)}</td><td class="num">${fmt(r.tps)}</td>
+      <td class="num">${fmt(r.ttfa_ms)}</td><td class="num">${fmt(r.total_ms)}</td><td class="num">${fmt(r.tps)}</td>
       <td class="num">${fmt(r.prompt_tokens)}</td>
       <td class="num">${r.cached_tokens === null ? "—" : fmt(r.cached_tokens)}</td>
       <td class="muted" title="${esc(r.error)}">${esc((r.error || "").slice(0, 60))}</td>
