@@ -45,7 +45,6 @@ input, select, textarea {
 }
 label.f { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
 label.f input, label.f select { color: var(--fg); }
-.fixedval { padding: 6px 0; font-size: 13px; color: var(--fg); word-break: break-all; }
 .grid { display: grid; gap: 12px; }
 .g3 { grid-template-columns: repeat(3, 1fr); }
 .g4 { grid-template-columns: repeat(4, 1fr); }
@@ -99,8 +98,8 @@ h3.mini:first-child { margin-top: 0; }
       <div class="grid g3" style="margin-top:4px">
         <label class="f">提供商<select id="f_provider"></select></label>
         <label class="f">API Key<input id="f_api_key" type="password" placeholder="sk-...（留空则不带鉴权头）"></label>
+        <label class="f" id="f_model_select_wrap">模型<select id="f_model_select"></select></label>
         <label class="f" id="f_model_wrap">模型名<input id="f_model" placeholder="如 glm-4.6"></label>
-        <div class="hidden" id="f_model_fixed_wrap"><div class="f">模型<div class="fixedval" id="f_model_fixed"></div></div></div>
         <label class="f hidden" id="f_baseurl_wrap">Base URL<input id="f_base_url" placeholder="https://xxx/v1"></label>
         <div id="f_baseurl_fixed_wrap"><div class="f">Base URL<div class="fixedval" id="f_baseurl_fixed"></div></div></div>
         <label class="f">思考开关<select id="f_thinking_enabled">
@@ -256,15 +255,40 @@ async function loadMeta() {
 
 function providerOf(id) { return state.meta.providers.find(p => p.id === id) || {}; }
 
+// 模型字段：预设给了候选列表就出下拉（带「自定义…」兜底），否则手填
+function presetModels() {
+  const m = providerOf($("#f_provider").value).models;
+  return m && m.length ? m : null;
+}
+
+function syncModelFields(prefill) {
+  const models = presetModels();
+  const sel = $("#f_model_select");
+  $("#f_model_select_wrap").classList.toggle("hidden", !models);
+  if (models) {
+    const cur = prefill !== undefined ? prefill : sel.value;
+    sel.innerHTML = models.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join("")
+      + `<option value="__custom__">自定义…</option>`;
+    const inList = cur && models.includes(cur);
+    sel.value = inList ? cur : (cur ? "__custom__" : models[0]);
+    if (cur && !inList) $("#f_model").value = cur;   // 编辑不在候选里的旧模型
+  }
+  $("#f_model_wrap").classList.toggle("hidden", !!models && sel.value !== "__custom__");
+}
+
+function modelValue() {
+  const models = presetModels();
+  if (!models) return $("#f_model").value.trim();
+  return $("#f_model_select").value === "__custom__"
+    ? $("#f_model").value.trim() : $("#f_model_select").value;
+}
+
 function updateFormVis() {
   const p = $("#f_provider").value;
   const prov = providerOf(p);
-  const fixedModel = p === "deepseek";
   const fixedUrl = p !== "custom";
   const thinkOn = $("#f_thinking_enabled").value === "1";
-  $("#f_model_wrap").classList.toggle("hidden", fixedModel);
-  $("#f_model_fixed_wrap").classList.toggle("hidden", !fixedModel);
-  if (fixedModel) $("#f_model_fixed").textContent = (prov.models || [])[0] || "";
+  syncModelFields("");
   $("#f_baseurl_wrap").classList.toggle("hidden", fixedUrl);
   $("#f_baseurl_fixed_wrap").classList.toggle("hidden", !fixedUrl);
   if (fixedUrl) $("#f_baseurl_fixed").textContent = prov.base_url || "";
@@ -317,8 +341,8 @@ function openProfileForm(id) {
   const p = state.profiles.find(x => x.id === id) || {};
   $("#f_provider").value = p.provider || state.meta.providers[0]?.id || "deepseek";
   updateFormVis();
+  syncModelFields(p.model || "");      // 先按新提供商铺好候选，再回填当前模型
   $("#f_api_key").value = p.api_key || "";
-  $("#f_model").value = p.model || "";
   $("#f_base_url").value = p.provider === "custom" ? (p.base_url || "") : "";
   $("#f_thinking_enabled").value = p.thinking_enabled ? "1" : "0";
   $("#f_thinking_level").value = p.thinking_level || "medium";
@@ -333,12 +357,13 @@ async function saveProfile() {
   const payload = {
     provider,
     api_key: $("#f_api_key").value.trim(),
-    model: provider === "deepseek" ? "deepseek-flash" : $("#f_model").value.trim(),
+    model: modelValue(),
     base_url: provider === "custom" ? $("#f_base_url").value.trim() : null,
     thinking_enabled: $("#f_thinking_enabled").value === "1",
     thinking_level: $("#f_thinking_level").value,
     thinking_style: providerOf(provider).style_fixed ? null : $("#f_thinking_style").value,
   };
+  if (!payload.model) { $("#profileFormErr").textContent = "请填写模型名"; return; }
   try {
     const url = state.editingId ? `/api/profiles/${state.editingId}` : "/api/profiles";
     state.profiles = await fetchJSON(url, {
@@ -699,6 +724,7 @@ async function loadRun(runId) {
 
 // ---------------- 事件绑定 ----------------
 $("#f_provider").onchange = updateFormVis;
+$("#f_model_select").onchange = () => syncModelFields();
 $("#f_thinking_enabled").onchange = updateFormVis;
 $("#btnAddProfile").onclick = () => openProfileForm(null);
 $("#btnSaveProfile").onclick = saveProfile;

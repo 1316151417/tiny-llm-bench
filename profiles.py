@@ -21,7 +21,7 @@ THINKING_STYLES = ["thinking-type", "openai", "qwen", "custom"]
 LEVEL_LABELS = {"low": "低", "medium": "中", "high": "高"}
 
 STYLE_LABELS = {
-    "thinking-type": "DeepSeek / GLM（thinking.type）",
+    "thinking-type": "DeepSeek / GLM / 智谱（thinking.type）",
     "openai": "OpenAI（reasoning_effort）",
     "qwen": "Qwen（enable_thinking）",
     "custom": "不传思考参数",
@@ -33,6 +33,13 @@ PROVIDERS: dict[str, dict[str, Any]] = {
         "label": "DeepSeek",
         "base_url": "https://api.deepseek.com",
         "models": ["deepseek-flash"],
+        "thinking_style": "thinking-type",
+    },
+    "zhipu": {
+        "label": "智谱",
+        "base_url": "https://open.bigmodel.cn/api/coding/paas/v4",
+        # 列表仅作下拉候选，界面上可选「自定义」填其他模型
+        "models": ["glm-4.6", "glm-4.5", "glm-4.5-air"],
         "thinking_style": "thinking-type",
     },
     "beike": {
@@ -74,11 +81,13 @@ def _normalize(raw: dict[str, Any], existing_id: Optional[str] = None) -> dict[s
     else:
         base_url = PROVIDERS[provider]["base_url"]
 
-    if provider == "deepseek":
-        model = PROVIDERS[provider]["models"][0]
-    else:
-        model = str(raw.get("model", "")).strip()
-        if not model:
+    # 有候选列表的预设：留空则用第一个候选；否则必须给模型名
+    preset_models = PROVIDERS[provider]["models"]
+    model = str(raw.get("model", "")).strip()
+    if not model:
+        if preset_models:
+            model = preset_models[0]
+        else:
             raise ValueError("模型名不能为空")
 
     level = str(raw.get("thinking_level") or "medium")
