@@ -42,6 +42,12 @@ PROVIDERS: dict[str, dict[str, Any]] = {
         "models": ["glm-5.3", "glm-5.3-flash", "glm-4.6", "glm-4.5", "glm-4.5-air"],
         "thinking_style": "thinking-type",
     },
+    "zhipu_open": {
+        "label": "智谱",
+        "base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "models": ["glm-5.3", "glm-5.3-flash", "glm-5.3-flashx", "glm-4.6", "glm-4.5", "glm-4.5-air"],
+        "thinking_style": "thinking-type",
+    },
     "beike": {
         "label": "贝壳",
         "base_url": "https://openapi-ait.ke.com/v1",
@@ -88,7 +94,7 @@ def _model_thinking_rules(model: str) -> dict[str, Any]:
 
 # 只对这些「厂商自家端点」下发 reasoning_effort：
 # 网关（贝壳/自定义）的转发语义未知，不擅自加参数，避免把本来能跑的配置改坏
-_EFFORT_KNOWN_ENDPOINTS = ("deepseek", "zhipu")
+_EFFORT_KNOWN_ENDPOINTS = ("deepseek", "zhipu", "zhipu_open")
 
 
 def thinking_capability(provider: str, model: str) -> dict[str, Any]:
@@ -173,6 +179,8 @@ def _migrate(p: dict[str, Any]) -> dict[str, Any]:
     bu = str(p.get("base_url", ""))
     if "deepseek.com" in bu:
         provider = "deepseek"
+    elif "open.bigmodel.cn" in bu:
+        provider = "zhipu" if "/coding/" in bu else "zhipu_open"
     elif "openapi-ait.ke.com" in bu:
         provider = "beike"
     else:
